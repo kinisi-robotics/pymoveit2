@@ -1,7 +1,7 @@
 import copy
 import threading
 from enum import Enum
-from typing import Any, List, Optional, Tuple, Union
+from typing import Any, Iterable, List, Optional, Tuple, Union
 
 import numpy as np
 import rclpy
@@ -10,6 +10,7 @@ from geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from moveit_msgs.action import ExecuteTrajectory, MoveGroup
 from moveit_msgs.msg import (
     AllowedCollisionEntry,
+    AllowedCollisionMatrix,
     AttachedCollisionObject,
     CollisionObject,
     Constraints,
@@ -1848,6 +1849,69 @@ class MoveIt2:
         ).scene
         return True
 
+    def _acm_begin_edit(self) -> bool:
+        """
+        Refresh planning scene and snapshot ACM for rollback.
+        """
+        if not self.update_planning_scene():
+            return False
+        self.__old_allowed_collision_matrix = copy.deepcopy(
+            self.__planning_scene.allowed_collision_matrix
+        )
+        return True
+
+    def _acm_unpack(self) -> Tuple[List[str], List[List[bool]]]:
+        """
+        Return ACM as (names, values) where values is a square bool matrix.
+        Requires update_planning_scene() to be fresh.
+        """
+        acm = self.__planning_scene.allowed_collision_matrix
+        names = list(acm.entry_names)
+        values = [list(e.enabled) for e in acm.entry_values]
+        return names, values
+
+    def _acm_pack_and_apply(self, names: List[str], values: List[List[bool]]) -> Optional[Future]:
+        """
+        Pack (names, values) into a diff PlanningScene and apply it.
+        """
+        new_acm = AllowedCollisionMatrix()
+        new_acm.entry_names = names
+        new_acm.entry_values = [AllowedCollisionEntry(enabled=row) for row in values]
+
+        diff = PlanningScene()
+        diff.is_diff = True
+        diff.allowed_collision_matrix = new_acm
+
+        return self.apply_planning_scene(diff)
+
+    def _acm_ensure_name(self, names: List[str], values: List[List[bool]], name: str) -> int:
+        """
+        Ensure 'name' has a row+column; grow the square matrix as needed. Return index.
+        """
+        try:
+            return names.index(name)
+        except ValueError:
+            for row in values:
+                row.append(False)
+            width = len(values[0]) if values else 0
+            values.append([False] * (width + (0 if values else 1)))
+            names.append(name)
+            return len(names) - 1
+
+    def apply_planning_scene(self, scene: PlanningScene) -> Optional[Future]:
+        """
+        Thin wrapper over ApplyPlanningScene for consistency with other helpers.
+        """
+        self._apply_planning_scene_service.wait_for_service(timeout_sec=3.0)
+        if not self._apply_planning_scene_service.service_is_ready():
+            self._node.get_logger().warn(
+                f"Service '{self._apply_planning_scene_service.srv_name}' is not yet available. Better luck next time!"
+            )
+            return None
+        return self._apply_planning_scene_service.call_async(
+            ApplyPlanningScene.Request(scene=scene)
+        )
+
     def allow_collisions(self, id: str, allow: bool) -> Optional[Future]:
         """
         Takes in the ID of an element in the planning scene. Modifies the allowed
@@ -1858,45 +1922,88 @@ class MoveIt2:
         If `allow` is False, a plan will fail if the robot collides with that object.
         Returns whether it successfully updated the allowed collision matrix.
 
+        Note: This method is O(N) over all current ACM entries. For selective collision 
+        allowances with specific links, prefer `allow_collisions_with_links()` for better 
+        performance.
+
         Returns the future of the service call.
         """
-        # Update the planning scene
-        if not self.update_planning_scene():
+        if not self._acm_begin_edit():
             return None
-        allowed_collision_matrix = self.__planning_scene.allowed_collision_matrix
-        self.__old_allowed_collision_matrix = copy.deepcopy(allowed_collision_matrix)
 
-        # Get the location in the allowed collision matrix of the object
-        j = None
-        if id not in allowed_collision_matrix.entry_names:
-            allowed_collision_matrix.entry_names.append(id)
-        else:
-            j = allowed_collision_matrix.entry_names.index(id)
-        # For all other objects, (dis)allow collisions with the object with `id`
-        for i in range(len(allowed_collision_matrix.entry_values)):
-            if j is None:
-                allowed_collision_matrix.entry_values[i].enabled.append(allow)
-            elif i != j:
-                allowed_collision_matrix.entry_values[i].enabled[j] = allow
-        # For the object with `id`, (dis)allow collisions with all other objects
-        allowed_collision_entry = AllowedCollisionEntry(
-            enabled=[allow for _ in range(len(allowed_collision_matrix.entry_names))]
-        )
+        names, values = self._acm_unpack()
+
+        # j: column/row for 'id'
+        j = names.index(id) if id in names else None
         if j is None:
-            allowed_collision_matrix.entry_values.append(allowed_collision_entry)
-        else:
-            allowed_collision_matrix.entry_values[j] = allowed_collision_entry
+            # grow matrix for 'id'
+            j = self._acm_ensure_name(names, values, id)
 
-        # Apply the new planning scene
-        self._apply_planning_scene_service.wait_for_service(timeout_sec=3.0)
-        if not self._apply_planning_scene_service.service_is_ready():
-            self._node.get_logger().warn(
-                f"Service '{self._apply_planning_scene_service.srv_name}' is not yet available. Better luck next time!"
-            )
+        # set column j for all i != j
+        for i in range(len(values)):
+            if i != j:
+                values[i][j] = allow
+
+        # set row j for all entries (including diagonal, matching current impl)
+        values[j] = [allow for _ in range(len(names))]
+
+        return self._acm_pack_and_apply(names, values)
+
+    def allow_collision_pair(self, a: str, b: str, allow: bool) -> Optional[Future]:
+        """
+        Symmetrically toggle ACM[a,b] and ACM[b,a] = allow.
+        Returns Future for ApplyPlanningScene.
+        """
+        if not self._acm_begin_edit():
             return None
-        return self._apply_planning_scene_service.call_async(
-            ApplyPlanningScene.Request(scene=self.__planning_scene)
-        )
+
+        names, values = self._acm_unpack()
+        ia = self._acm_ensure_name(names, values, a)
+        ib = self._acm_ensure_name(names, values, b)
+
+        values[ia][ib] = allow
+        values[ib][ia] = allow
+
+        return self._acm_pack_and_apply(names, values)
+
+    def allow_collision_pairs(self, pairs: Iterable[Tuple[str, str]], allow: bool) -> Optional[Future]:
+        """
+        Toggle multiple symmetric pairs in one ACM diff apply.
+        Example: allow_collision_pairs([("<octomap>", link) for link in links], True)
+        """
+        if not self._acm_begin_edit():
+            return None
+        names, values = self._acm_unpack()
+
+        for a, b in pairs:
+            ia = self._acm_ensure_name(names, values, a)
+            ib = self._acm_ensure_name(names, values, b)
+            values[ia][ib] = allow
+            values[ib][ia] = allow
+
+        return self._acm_pack_and_apply(names, values)
+
+    def allow_collisions_with_links(self, object_id: str, links: Iterable[str], allow: bool) -> Optional[Future]:
+        """
+        One-shot apply for object_id <-> each link in links.
+        """
+        return self.allow_collision_pairs(((object_id, link) for link in links), allow)
+
+    def mutate_allowed_collisions(self, edits: Iterable[Tuple[str, str, bool]]) -> Optional[Future]:
+        """
+        Apply arbitrary ACM pair edits (a,b,allow) in a single apply.
+        """
+        if not self._acm_begin_edit():
+            return None
+        names, values = self._acm_unpack()
+
+        for a, b, allow in edits:
+            ia = self._acm_ensure_name(names, values, a)
+            ib = self._acm_ensure_name(names, values, b)
+            values[ia][ib] = allow
+            values[ib][ia] = allow
+
+        return self._acm_pack_and_apply(names, values)
 
     def process_allow_collision_future(self, future: Future) -> bool:
         """
@@ -1911,6 +2018,7 @@ class MoveIt2:
 
         # If it failed, restore the old planning scene
         if not resp.success:
+            self._node.get_logger().warn("ApplyPlanningScene for ACM changes failed. Restoring local snapshot.")
             self.__planning_scene.allowed_collision_matrix = (
                 self.__old_allowed_collision_matrix
             )
