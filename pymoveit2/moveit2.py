@@ -523,8 +523,8 @@ class MoveIt2:
         if future is None:
             return None
 
-        while not future.done():
-            rclpy.spin_once(self._node, timeout_sec=1.0)
+        # Note that this will block indefinitely until the future is complete
+        rclpy.spin_until_future_complete(self._node, future)
 
         return self.get_trajectory(
             future,
