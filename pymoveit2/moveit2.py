@@ -527,10 +527,11 @@ class MoveIt2:
         if future is None:
             return None
 
-        # 100ms sleep
-        rate = self._node.create_rate(10)
+        # 10ms sleep - much faster polling to avoid 1-second delays
+        rate = self._node.create_rate(100)  # 100Hz = 10ms
         while not future.done():
-            rclpy.spin_once(self._node, timeout_sec=1.0)
+            rclpy.spin_once(self._node, timeout_sec=0.01)  # 10ms timeout instead of 1 second
+            rate.sleep()
 
         return self.get_trajectory(
             future,
