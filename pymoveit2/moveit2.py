@@ -531,7 +531,9 @@ class MoveIt2:
         # 10ms sleep - much faster polling to avoid 1-second delays
         rate = self._node.create_rate(100)  # 100Hz = 10ms
         while not future.done():
-            rclpy.spin_once(self._node, timeout_sec=0.01)  # 10ms timeout instead of 1 second
+            rclpy.spin_once(
+                self._node, timeout_sec=0.01
+            )  # 10ms timeout instead of 1 second
             rate.sleep()
 
         return self.get_trajectory(
@@ -650,12 +652,16 @@ class MoveIt2:
         # Ensure the request actually uses the intended start state
         if start_joint_state is not None:
             if isinstance(start_joint_state, JointState):
-                self.__move_action_goal.request.start_state.joint_state = start_joint_state
+                self.__move_action_goal.request.start_state.joint_state = (
+                    start_joint_state
+                )
             else:
                 # start_joint_state is a list of positions
-                self.__move_action_goal.request.start_state.joint_state = init_joint_state(
-                    joint_names=self.__joint_names,
-                    joint_positions=start_joint_state,
+                self.__move_action_goal.request.start_state.joint_state = (
+                    init_joint_state(
+                        joint_names=self.__joint_names,
+                        joint_positions=start_joint_state,
+                    )
                 )
         elif self.joint_state is not None:
             # Default to the latest observed state if none provided
@@ -1870,7 +1876,9 @@ class MoveIt2:
         values = [list(e.enabled) for e in acm.entry_values]
         return names, values
 
-    def _acm_pack_and_apply(self, names: List[str], values: List[List[bool]]) -> Optional[Future]:
+    def _acm_pack_and_apply(
+        self, names: List[str], values: List[List[bool]]
+    ) -> Optional[Future]:
         """
         Pack (names, values) into a diff PlanningScene and apply it.
         """
@@ -1884,7 +1892,9 @@ class MoveIt2:
 
         return self.apply_planning_scene(diff)
 
-    def _acm_ensure_name(self, names: List[str], values: List[List[bool]], name: str) -> int:
+    def _acm_ensure_name(
+        self, names: List[str], values: List[List[bool]], name: str
+    ) -> int:
         """
         Ensure 'name' has a row+column; grow the square matrix as needed. Return index.
         """
@@ -1922,8 +1932,8 @@ class MoveIt2:
         If `allow` is False, a plan will fail if the robot collides with that object.
         Returns whether it successfully updated the allowed collision matrix.
 
-        Note: This method is O(N) over all current ACM entries. For selective collision 
-        allowances with specific links, prefer `allow_collisions_with_links()` for better 
+        Note: This method is O(N) over all current ACM entries. For selective collision
+        allowances with specific links, prefer `allow_collisions_with_links()` for better
         performance.
 
         Returns the future of the service call.
@@ -1966,7 +1976,9 @@ class MoveIt2:
 
         return self._acm_pack_and_apply(names, values)
 
-    def allow_collision_pairs(self, pairs: Iterable[Tuple[str, str]], allow: bool) -> Optional[Future]:
+    def allow_collision_pairs(
+        self, pairs: Iterable[Tuple[str, str]], allow: bool
+    ) -> Optional[Future]:
         """
         Toggle multiple symmetric pairs in one ACM diff apply.
         Example: allow_collision_pairs([("<octomap>", link) for link in links], True)
@@ -1983,13 +1995,17 @@ class MoveIt2:
 
         return self._acm_pack_and_apply(names, values)
 
-    def allow_collisions_with_links(self, object_id: str, links: Iterable[str], allow: bool) -> Optional[Future]:
+    def allow_collisions_with_links(
+        self, object_id: str, links: Iterable[str], allow: bool
+    ) -> Optional[Future]:
         """
         One-shot apply for object_id <-> each link in links.
         """
         return self.allow_collision_pairs(((object_id, link) for link in links), allow)
 
-    def mutate_allowed_collisions(self, edits: Iterable[Tuple[str, str, bool]]) -> Optional[Future]:
+    def mutate_allowed_collisions(
+        self, edits: Iterable[Tuple[str, str, bool]]
+    ) -> Optional[Future]:
         """
         Apply arbitrary ACM pair edits (a,b,allow) in a single apply.
         """
@@ -2018,7 +2034,9 @@ class MoveIt2:
 
         # If it failed, restore the old planning scene
         if not resp.success:
-            self._node.get_logger().warn("ApplyPlanningScene for ACM changes failed. Restoring local snapshot.")
+            self._node.get_logger().warn(
+                "ApplyPlanningScene for ACM changes failed. Restoring local snapshot."
+            )
             self.__planning_scene.allowed_collision_matrix = (
                 self.__old_allowed_collision_matrix
             )
