@@ -154,7 +154,7 @@ class MoveIt2:
         self.motion_suceeded = False
         self.__execution_goal_handle = None
         self.__last_error_code = None
-        self.__wait_until_executed_rate = self._node.create_rate(1000.0)
+        self.__spin_wait_rate = self._node.create_rate(1000.0)
         self.__execution_mutex = threading.Lock()
 
         # Event that enables waiting until async future is done
@@ -530,12 +530,11 @@ class MoveIt2:
             return None
 
         # 10ms sleep - much faster polling to avoid 1-second delays
-        rate = self._node.create_rate(100)  # 100Hz = 10ms
         while not future.done():
             rclpy.spin_once(
                 self._node, timeout_sec=0.01
             )  # 10ms timeout instead of 1 second
-            rate.sleep()
+            self.__spin_wait_rate.sleep()
 
         return self.get_trajectory(
             future,
@@ -772,10 +771,9 @@ class MoveIt2:
             )
             return False
 
-        rate = self._node.create_rate(100)  # 100Hz = 10ms
         while self.__is_motion_requested or self.__is_executing:
             rclpy.spin_once(self._node, timeout_sec=0.01)
-            rate.sleep()
+            self.__spin_wait_rate.sleep()
 
         return self.motion_suceeded
 
@@ -1218,10 +1216,9 @@ class MoveIt2:
         if future is None:
             return None
 
-        # 100ms sleep
-        rate = self._node.create_rate(10)
         while not future.done():
-            rclpy.spin_once(self._node, timeout_sec=1.0)
+            rclpy.spin_once(self._node, timeout_sec=0.01)
+            self.__spin_wait_rate.sleep()
 
         return self.get_compute_fk_result(future, fk_link_names=fk_link_names)
 
@@ -1312,11 +1309,10 @@ class MoveIt2:
         if future is None:
             return None
 
-        # 10ms sleep
-        rate = self._node.create_rate(10)
         while not future.done():
-            rclpy.spin_once(self._node, timeout_sec=1.0)
-
+            rclpy.spin_once(self._node, timeout_sec=0.01)
+            self.__spin_wait_rate.sleep()
+            
         return self.get_compute_ik_result(future)
 
     def get_compute_ik_result(
