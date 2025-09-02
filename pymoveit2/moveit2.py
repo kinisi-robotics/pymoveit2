@@ -1840,6 +1840,40 @@ class MoveIt2:
 
         self.__collision_object_publisher.publish(msg)
 
+    def fetch_planning_scene_components(
+        self, components: int
+    ) -> Optional[PlanningScene]:
+        """
+        Fetch specific planning scene components without updating the cached scene.
+
+        This is useful for targeted queries (e.g., checking if objects exist, reading ACM)
+        without the overhead of fetching the full scene or overwriting the cache.
+
+        Args:
+            components: PlanningSceneComponents bitmask specifying what to fetch
+
+        Returns:
+            PlanningScene with requested components, or None if service call failed
+        """
+        req = GetPlanningScene.Request()
+        req.components.components = int(components)
+
+        self._get_planning_scene_service.wait_for_service(timeout_sec=3.0)
+        if not self._get_planning_scene_service.service_is_ready():
+            self._node.get_logger().warn(
+                f"Service '{self._get_planning_scene_service.srv_name}' is not ready."
+            )
+            return None
+
+        try:
+            result = self._get_planning_scene_service.call(req)
+            return result.scene if result else None
+        except Exception as e:
+            self._node.get_logger().error(
+                f"Failed to fetch planning scene components: {e}"
+            )
+            return None
+
     def update_planning_scene(self, components: Optional[int] = None) -> bool:
         """
         Refresh local copy of the planning scene.
@@ -1864,13 +1898,23 @@ class MoveIt2:
         return True
 
     def _acm_begin_edit(self) -> bool:
-        """Refresh planning scene (ACM only) and snapshot ACM for rollback."""
-        if not self.update_planning_scene(
+        """Fetch ACM without clobbering cached scene and snapshot ACM for rollback."""
+        # Fetch only ACM without modifying the cached scene
+        scene = self.fetch_planning_scene_components(
             PlanningSceneComponents.ALLOWED_COLLISION_MATRIX
-        ):
+        )
+        if scene is None:
             return False
+
         self.__old_allowed_collision_matrix = copy.deepcopy(
-            self.__planning_scene.allowed_collision_matrix
+            scene.allowed_collision_matrix
+        )
+
+        # Keep cache's ACM in sync without touching other fields
+        if self.__planning_scene is None:
+            self.__planning_scene = PlanningScene()
+        self.__planning_scene.allowed_collision_matrix = copy.deepcopy(
+            scene.allowed_collision_matrix
         )
         return True
 
