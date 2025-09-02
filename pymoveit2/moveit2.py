@@ -18,6 +18,7 @@ from moveit_msgs.msg import (
     MoveItErrorCodes,
     OrientationConstraint,
     PlanningScene,
+    PlanningSceneComponents,
     PositionConstraint,
 )
 from moveit_msgs.srv import (
@@ -1839,27 +1840,39 @@ class MoveIt2:
 
         self.__collision_object_publisher.publish(msg)
 
-    def update_planning_scene(self) -> bool:
+    def update_planning_scene(self, components: int = None) -> bool:
         """
-        Gets the current planning scene. Returns whether the service call was
-        successful.
+        Refresh local copy of the planning scene, requesting only the needed components.
+        NOTE: By default we avoid OCTOMAP because some setups crash when it's requested.
+
+        Args:
+            components: PlanningSceneComponents bitmask. If None, uses safe minimal set.
         """
+        if components is None:
+            # Minimal, safe-by-default set. Add more if needed,but avoid OCTOMAP.
+            components = (
+                PlanningSceneComponents.ALLOWED_COLLISION_MATRIX
+                | PlanningSceneComponents.WORLD_OBJECT_NAMES
+                | PlanningSceneComponents.WORLD_OBJECT_GEOMETRY
+                | PlanningSceneComponents.OBJECT_COLORS
+                | PlanningSceneComponents.ROBOT_STATE_ATTACHED_OBJECTS
+            )
+        req = GetPlanningScene.Request()
+        req.components.components = components
         self._get_planning_scene_service.wait_for_service(timeout_sec=3.0)
         if not self._get_planning_scene_service.service_is_ready():
             self._node.get_logger().warn(
                 f"Service '{self._get_planning_scene_service.srv_name}' is not yet available. Better luck next time!"
             )
             return False
-        self.__planning_scene = self._get_planning_scene_service.call(
-            GetPlanningScene.Request()
-        ).scene
+        self.__planning_scene = self._get_planning_scene_service.call(req).scene
         return True
 
     def _acm_begin_edit(self) -> bool:
-        """
-        Refresh planning scene and snapshot ACM for rollback.
-        """
-        if not self.update_planning_scene():
+        """Refresh planning scene (ACM only) and snapshot ACM for rollback."""
+        if not self.update_planning_scene(
+            PlanningSceneComponents.ALLOWED_COLLISION_MATRIX
+        ):
             return False
         self.__old_allowed_collision_matrix = copy.deepcopy(
             self.__planning_scene.allowed_collision_matrix
@@ -2049,8 +2062,12 @@ class MoveIt2:
 
         Returns a future for the ApplyPlanningScene service call.
         """
-        # Update the planning scene
-        if not self.update_planning_scene():
+        # Update the planning scene (need world objects and attached objects to clear them)
+        components = (
+            PlanningSceneComponents.WORLD_OBJECT_GEOMETRY
+            | PlanningSceneComponents.ROBOT_STATE_ATTACHED_OBJECTS
+        )
+        if not self.update_planning_scene(components):
             return None
         self.__old_planning_scene = copy.deepcopy(self.__planning_scene)
 
