@@ -772,8 +772,10 @@ class MoveIt2:
             )
             return False
 
+        rate = self._node.create_rate(100)  # 100Hz = 10ms
         while self.__is_motion_requested or self.__is_executing:
-            rclpy.spin_once(self._node, timeout_sec=1.0)
+            rclpy.spin_once(self._node, timeout_sec=0.01)
+            rate.sleep()
 
         return self.motion_suceeded
 
