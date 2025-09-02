@@ -1840,25 +1840,20 @@ class MoveIt2:
 
         self.__collision_object_publisher.publish(msg)
 
-    def update_planning_scene(self, components: int = None) -> bool:
+    def update_planning_scene(self, components: Optional[int] = None) -> bool:
         """
-        Refresh local copy of the planning scene, requesting only the needed components.
-        NOTE: By default we avoid OCTOMAP because some setups crash when it's requested.
+        Refresh local copy of the planning scene.
 
         Args:
-            components: PlanningSceneComponents bitmask. If None, uses safe minimal set.
+            components: PlanningSceneComponents bitmask. If None, requests full scene (legacy behavior).
+                       To avoid OCTOMAP crashes on some setups, consider passing specific components like
+                       PlanningSceneComponents.ALLOWED_COLLISION_MATRIX when you only need the ACM.
         """
-        if components is None:
-            # Minimal, safe-by-default set. Add more if needed,but avoid OCTOMAP.
-            components = (
-                PlanningSceneComponents.ALLOWED_COLLISION_MATRIX
-                | PlanningSceneComponents.WORLD_OBJECT_NAMES
-                | PlanningSceneComponents.WORLD_OBJECT_GEOMETRY
-                | PlanningSceneComponents.OBJECT_COLORS
-                | PlanningSceneComponents.ROBOT_STATE_ATTACHED_OBJECTS
-            )
         req = GetPlanningScene.Request()
-        req.components.components = components
+        if components is not None:
+            req.components.components = components
+        # else: leave default (0) -> server returns full scene (backward compatible)
+
         self._get_planning_scene_service.wait_for_service(timeout_sec=3.0)
         if not self._get_planning_scene_service.service_is_ready():
             self._node.get_logger().warn(
