@@ -45,7 +45,7 @@ from std_msgs.msg import Header, String
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 from pymoveit2.utils import enum_to_str
-
+import time
 
 class MoveIt2State(Enum):
     """
@@ -1218,9 +1218,11 @@ class MoveIt2:
 
         while not future.done():
             rclpy.spin_once(self._node, timeout_sec=0.01)
-            self.__spin_wait_rate.sleep()
+            time.sleep(0.001)
 
-        return self.get_compute_fk_result(future, fk_link_names=fk_link_names)
+        result = self.get_compute_fk_result(future, fk_link_names=fk_link_names)
+        del future
+        return result
 
     def get_compute_fk_result(
         self,
@@ -1311,9 +1313,13 @@ class MoveIt2:
 
         while not future.done():
             rclpy.spin_once(self._node, timeout_sec=0.01)
-            self.__spin_wait_rate.sleep()
+            # Use simple time.sleep instead of Rate to avoid timing drift accumulation
+            time.sleep(0.001)
             
-        return self.get_compute_ik_result(future)
+        result = self.get_compute_ik_result(future)
+        # Explicitly clear future to prevent resource leaks
+        del future
+        return result
 
     def get_compute_ik_result(
         self,
@@ -1401,8 +1407,8 @@ class MoveIt2:
         elif self.joint_state is not None:
             self.__compute_ik_req.ik_request.robot_state.joint_state = self.joint_state
 
-        if constraints is not None:
-            self.__compute_ik_req.ik_request.constraints = constraints
+        # Clear previous constraints to prevent accumulation
+        self.__compute_ik_req.ik_request.constraints = Constraints() if constraints is None else constraints
 
         stamp = self._node.get_clock().now().to_msg()
         self.__compute_ik_req.ik_request.pose_stamped.header.stamp = stamp
