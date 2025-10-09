@@ -1312,7 +1312,7 @@ class MoveIt2:
         while not future.done():
             rclpy.spin_once(self._node, timeout_sec=0.01)
             self.__spin_wait_rate.sleep()
-            
+
         return self.get_compute_ik_result(future)
 
     def get_compute_ik_result(
