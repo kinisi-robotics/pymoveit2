@@ -239,7 +239,8 @@ class MoveIt2:
             callback_group=callback_group,
         )
         self.__cartesian_path_request = GetCartesianPath.Request()
-
+        self.__cartesian_path_request.avoid_collisions = True
+        
         # Create action client for trajectory execution
         self._execute_trajectory_action_client = ActionClient(
             node=self._node,
